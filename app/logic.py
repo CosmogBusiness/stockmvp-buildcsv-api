@@ -36,11 +36,10 @@ def validate_ventas_df(df: pd.DataFrame):
 def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes) -> pd.DataFrame:
     """
     Lee los CSV de stock y ventas (en bytes), valida y construye el DataFrame de relación:
-    Fecha,SKU,Stock,Unidades_Vendidas,Reposicion
+    Fecha,SKU,Stock,Unidades_Vendidas
 
     - Stock: stock al inicio de la fecha
     - Unidades_Vendidas: vendidas ese día (0 si no hay)
-    - Reposicion: 1 si el stock sube respecto al día anterior, 0 en caso contrario
 
     Lanza RelationCSVError si los formatos no son correctos.
     """
@@ -55,11 +54,11 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes) -> pd.Da
     validate_stock_df(stock_df)
     validate_ventas_df(ventas_df)
 
-    # Normalizar tipos de SKU
+    # Normalizar SKU
     stock_df["SKU"] = stock_df["SKU"].astype(str)
     ventas_df["SKU"] = ventas_df["SKU"].astype(str)
 
-    # Todas las fechas del histórico de ventas
+    # Todas las fechas ordenadas
     fechas = ventas_df["Fecha"].drop_duplicates().sort_values()
     all_skus = stock_df["SKU"].unique()
     idx = pd.MultiIndex.from_product([fechas, all_skus], names=["Fecha", "SKU"])
@@ -70,7 +69,7 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes) -> pd.Da
     ventas_full["Stock"] = ventas_full["SKU"].map(initial_stock_map)
     ventas_full = ventas_full.sort_values(["SKU", "Fecha"]).reset_index(drop=True)
 
-    # Simular stock día a día y marcar reposiciones
+    # Simular stock día a día
     historico = []
     for sku in all_skus:
         sku_registros = ventas_full[ventas_full["SKU"] == sku].copy()
@@ -84,19 +83,12 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes) -> pd.Da
             else:
                 stock = historico[-1]["Stock"] - historico[-1]["Unidades_Vendidas"]
                 stock = max(stock, 0)
-            # Reposición si sube el stock respecto al día anterior
-            if len(historico) > 0 and historico[-1]["SKU"] == sku:
-                prev_stock_val = historico[-1]["Stock"] - historico[-1]["Unidades_Vendidas"]
-                reposicion = 1 if stock > prev_stock_val else 0
-            else:
-                reposicion = 0
             historico.append({
                 "Fecha": fecha.strftime("%Y-%m-%d") if not isinstance(fecha, str) else fecha,
                 "SKU": sku,
                 "Stock": stock,
-                "Unidades_Vendidas": unidades_vendidas,
-                "Reposicion": reposicion
+                "Unidades_Vendidas": unidades_vendidas
             })
 
-    historico_df = pd.DataFrame(historico, columns=["Fecha", "SKU", "Stock", "Unidades_Vendidas", "Reposicion"])
+    historico_df = pd.DataFrame(historico, columns=["Fecha", "SKU", "Stock", "Unidades_Vendidas"])
     return historico_df

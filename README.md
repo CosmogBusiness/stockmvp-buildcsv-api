@@ -4,7 +4,7 @@ API y utilidad para generar automáticamente un CSV de relación stock‑ventas,
 
 ## 🚀 ¿Qué hace este proyecto?
 
-- Expone una API HTTP (FastAPI) para subir dos archivos CSV (`stock.csv`, `ventas.csv`) y recibir como respuesta un CSV `historico_stock_ventas.csv` con la relación diaria de stock y ventas, detectando reposiciones.
+- Expone una API HTTP (FastAPI) para subir dos archivos CSV (`stock.csv`, `ventas.csv`) y recibir como respuesta un CSV `historico_stock_ventas.csv` con la relación diaria de stock y ventas.
 - Permite integración fácil con Render y cualquier plataforma Docker.
 
 ## 📦 Estructura del proyecto
@@ -49,19 +49,18 @@ Fecha,SKU,Unidades_Vendidas
 ### Salida: `historico_stock_ventas.csv`
 Columnas generadas:
 ```
-Fecha,SKU,Stock,Unidades_Vendidas,Reposicion
+Fecha,SKU,Stock,Unidades_Vendidas
 ```
 Ejemplo:
 ```csv
-Fecha,SKU,Stock,Unidades_Vendidas,Reposicion
-2024-06-01,1001,15,2,0
-2024-06-02,1001,13,3,0
-2024-06-01,1002,30,1,0
-2024-06-02,1002,29,0,0
+Fecha,SKU,Stock,Unidades_Vendidas
+2024-06-01,1001,15,2
+2024-06-02,1001,13,3
+2024-06-01,1002,30,1
+2024-06-02,1002,29,0
 ```
 - **Stock**: stock al inicio de cada día/SKU
 - **Unidades_Vendidas**: vendidas ese día (0 si no hubo ventas)
-- **Reposicion**: 1 si el stock sube respecto al día anterior, 0 en caso contrario
 
 ## 🚢 Cómo construir y ejecutar con Docker
 
