@@ -12,7 +12,8 @@ from app.logic import build_stock_sales_relation, RelationCSVError
 import pandas as pd
 
 TMP_OUTPUT = "/tmp/historico_stock_ventas.csv"
-API_KEY = "4p1k3y_53cr3t4Oc05m06bu51n355"  # Clave secreta para acceso
+# Puedes migrar esto a una lista/set desde base de datos para múltiples claves
+API_KEYS = {"4p1k3y_53cr3t4Oc05m06bu51n355"}
 
 app = FastAPI(
     title="Stock Sales Relation API",
@@ -20,12 +21,12 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Middleware para verificar clave API en cada petición al endpoint protegido
+# Middleware para verificar clave API en header x-api-key (más seguro, estándar)
 @app.middleware("http")
 async def verificar_api_key(request: Request, call_next):
     if request.url.path.startswith("/build-relation"):
-        apikey = request.query_params.get("apikey")
-        if apikey != API_KEY:
+        apikey = request.headers.get("x-api-key")
+        if apikey not in API_KEYS:
             raise HTTPException(status_code=401, detail="Acceso no autorizado. API key inválida.")
     return await call_next(request)
 
@@ -36,7 +37,14 @@ async def root():
     return {"status": "ok"}
 
 
-@app.post("/build-relation/", tags=["Generador CSV"])
+@app.post("/build-relation/", tags=["Generador CSV"], responses={
+    200: {
+        "content": {"text/csv": {}},
+        "description": "Archivo CSV de histórico stock-ventas"
+    },
+    401: {"description": "No autorizado, clave API inválida"},
+    400: {"description": "Error de validación o procesamiento"}
+})
 async def build_relation_endpoint(
     stock_file: UploadFile = File(..., description="Archivo stock.csv"),
     ventas_file: UploadFile = File(..., description="Archivo ventas.csv"),
@@ -53,7 +61,8 @@ async def build_relation_endpoint(
       ]
     }
 
-    Para acceder, añade `?apikey=4p1k3y_53cr3t4Oc05m06bu51n355` al final de la URL.
+    Para acceder, añade el header:
+      x-api-key: 4p1k3y_53cr3t4Oc05m06bu51n355
     """
     try:
         stock_bytes = await stock_file.read()
