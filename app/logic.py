@@ -78,6 +78,8 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes, override
         for i, row in sku_registros.iterrows():
             fecha = row["Fecha"]
             unidades_vendidas = int(row["Unidades_Vendidas"])
+            precio_unitario = double(row["Precio_Unitario"])
+            ingreso_bruto = double(row["Precio_Unitario"])*double(row["Unidades_Vendidas"])
             # Primer día: stock inicial
             if i == sku_registros.index[0]:
                 stock = prev_stock
@@ -89,10 +91,12 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes, override
                 "SKU": sku,
                 "Stock": stock,
                 "Unidades_Vendidas": unidades_vendidas,
-                "Reposicion": 0  # Por defecto 0; se podrá modificar por override
+                "Reposicion": 0,  # Por defecto 0; se podrá modificar por override
+                "Precio_Unitario": precio_unitario,
+                "Ingreso_Bruto": ingreso_bruto
             })
 
-    historico_df = pd.DataFrame(historico, columns=["Fecha", "SKU", "Stock", "Unidades_Vendidas", "Reposicion"])
+    historico_df = pd.DataFrame(historico, columns=["Fecha", "SKU", "Stock", "Unidades_Vendidas", "Reposicion", "Precio_Unitario", "Ingreso_Bruto"])
 
     # Aplicar overrides si existen
     if overrides:
@@ -108,5 +112,9 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes, override
                 historico_df.loc[mask, "Reposicion"] = override["Reposicion"]
             if "Unidades_Vendidas" in override:
                 historico_df.loc[mask, "Unidades_Vendidas"] = override["Unidades_Vendidas"]
+            if "Precio_Unitario" in override:
+                historico_df.loc[mask, "Precio_Unitario"] = override["Precio_Unitario"]
+            if "Ingreso_Bruto" in override:
+                historico_df.loc[mask, "Ingreso_Bruto"] = override["Ingreso_Bruto"]
 
     return historico_df
