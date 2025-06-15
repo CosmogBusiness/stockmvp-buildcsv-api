@@ -1,48 +1,72 @@
+"""
+main.py
+
+API FastAPI para construir el CSV histórico de stock-ventas desde dos archivos CSV subidos.
+"""
+
+import os
+import json
+from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
+from fastapi.responses import FileResponse
+from app.logic import build_stock_sales_relation, RelationCSVError
 import pandas as pd
 
-def construir_historico(stock_df, ventas_df):
+TMP_OUTPUT = "/tmp/historico_stock_ventas.csv"
+API_KEY = "4p1k3y_53cr3t4Oc05m06bu51n355"  # Clave secreta para acceso
+
+app = FastAPI(
+    title="Stock Sales Relation API",
+    description="API para construir el histórico de relación stock-ventas combinando stock.csv y ventas.csv.",
+    version="1.0.0"
+)
+
+# Middleware para verificar clave API en cada petición al endpoint protegido
+@app.middleware("http")
+async def verificar_api_key(request: Request, call_next):
+    if request.url.path.startswith("/build-relation"):
+        apikey = request.query_params.get("apikey")
+        if apikey != API_KEY:
+            raise HTTPException(status_code=401, detail="Acceso no autorizado. API key inválida.")
+    return await call_next(request)
+
+
+@app.get("/", tags=["Healthcheck"])
+async def root():
+    """Health check endpoint."""
+    return {"status": "ok"}
+
+
+@app.post("/build-relation/", tags=["Generador CSV"])
+async def build_relation_endpoint(
+    stock_file: UploadFile = File(..., description="Archivo stock.csv"),
+    ventas_file: UploadFile = File(..., description="Archivo ventas.csv"),
+    overrides: str = Form(None, description="JSON con overrides para Reposicion y Unidades_Vendidas")
+):
     """
-    Construye el histórico de stock y ventas, incluyendo precio unitario e ingresos brutos.
-    Devuelve un DataFrame listo para exportar a CSV.
+    Sube stock.csv y ventas.csv y descarga historico_stock_ventas.csv generado.
+    Permite overrides para campos de Reposicion y Unidades_Vendidas en combinaciones Fecha y SKU.
+
+    El parámetro overrides debe ser un JSON tipo:
+    {
+      "overrides": [
+        {"Fecha": "2025-06-24", "SKU": "1001", "Reposicion": 8, "Unidades_Vendidas": 3}
+      ]
+    }
+
+    Para acceder, añade `?apikey=4p1k3y_53cr3t4Oc05m06bu51n355` al final de la URL.
     """
+    try:
+        stock_bytes = await stock_file.read()
+        ventas_bytes = await ventas_file.read()
+        overrides_obj = json.loads(overrides) if overrides else None
+        override_list = overrides_obj["overrides"] if overrides_obj and "overrides" in overrides_obj else None
+        df = build_stock_sales_relation(stock_bytes, ventas_bytes, override_list)
+        df.to_csv(TMP_OUTPUT, index=False)
+    except RelationCSVError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error procesando los archivos: {e}")
 
-    # Unir ventas con stock para traer Precio_Unitario
-    df = ventas_df.merge(stock_df[['SKU', 'Precio_Unitario']], on='SKU', how='left')
-
-    # Si Stock no está en ventas_df, intenta traerlo de stock_df (puedes adaptar esto según tu lógica real)
-    if 'Stock' not in df.columns:
-        stock_map = dict(zip(stock_df['SKU'], stock_df['Stock']))
-        df['Stock'] = df['SKU'].map(stock_map)
-    # Si Reposicion no existe, la ponemos a 0 por defecto
-    if 'Reposicion' not in df.columns:
-        df['Reposicion'] = 0
-
-    # Calcula los ingresos brutos
-    df['Ingresos_Brutos'] = df['Precio_Unitario'] * df['Unidades_Vendidas']
-
-    # Asegúrate de que las columnas están en el orden correcto
-    columnas = [
-        'Fecha',
-        'SKU',
-        'Stock',
-        'Unidades_Vendidas',
-        'Reposicion',
-        'Precio_Unitario',
-        'Ingresos_Brutos'
-    ]
-    df = df[columnas]
-
-    # Opcional: ordena por fecha y SKU
-    df = df.sort_values(['Fecha', 'SKU'])
-
-    return df
-
-if __name__ == "__main__":
-    # Lee los archivos (ajusta la ruta si hace falta)
-    stock_df = pd.read_csv("stock.csv")
-    ventas_df = pd.read_csv("ventas.csv")
-    ventas_df["Fecha"] = pd.to_datetime(ventas_df["Fecha"]).dt.strftime("%Y-%m-%d")
-
-    historico_df = construir_historico(stock_df, ventas_df)
-    historico_df.to_csv("historico_stock_ventas.csv", index=False)
-    print("historico_stock_ventas.csv generado correctamente con columnas:", historico_df.columns.tolist())
+    if not os.path.exists(TMP_OUTPUT):
+        raise HTTPException(status_code=500, detail="No se pudo generar el archivo de salida.")
+    return FileResponse(TMP_OUTPUT, media_type="text/csv", filename="historico_stock_ventas.csv")
