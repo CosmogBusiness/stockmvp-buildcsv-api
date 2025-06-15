@@ -5,13 +5,14 @@ API FastAPI para construir el CSV histórico de stock-ventas desde dos archivos 
 """
 
 import os
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+import json
+from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
 from fastapi.responses import FileResponse
 from app.logic import build_stock_sales_relation, RelationCSVError
 import pandas as pd
-import json
 
 TMP_OUTPUT = "/tmp/historico_stock_ventas.csv"
+API_KEY = "4p1k3y_53cr3t4Oc05m06bu51n355"  # Clave secreta para acceso
 
 app = FastAPI(
     title="Stock Sales Relation API",
@@ -19,10 +20,21 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Middleware para verificar clave API en cada petición al endpoint protegido
+@app.middleware("http")
+async def verificar_api_key(request: Request, call_next):
+    if request.url.path.startswith("/build-relation"):
+        apikey = request.query_params.get("apikey")
+        if apikey != API_KEY:
+            raise HTTPException(status_code=401, detail="Acceso no autorizado. API key inválida.")
+    return await call_next(request)
+
+
 @app.get("/", tags=["Healthcheck"])
 async def root():
     """Health check endpoint."""
     return {"status": "ok"}
+
 
 @app.post("/build-relation/", tags=["Generador CSV"])
 async def build_relation_endpoint(
@@ -40,6 +52,8 @@ async def build_relation_endpoint(
         {"Fecha": "2025-06-24", "SKU": "1001", "Reposicion": 8, "Unidades_Vendidas": 3}
       ]
     }
+
+    Para acceder, añade `?apikey=4p1k3y_53cr3t4Oc05m06bu51n355` al final de la URL.
     """
     try:
         stock_bytes = await stock_file.read()
