@@ -6,13 +6,16 @@ Funciones de negocio para la generación del histórico de stock-ventas.
 
 import pandas as pd
 import numpy as np
-import traceback
 
 class RelationCSVError(Exception):
     """Excepción personalizada para errores de formato de CSV."""
     pass
 
 def validate_stock_df(df: pd.DataFrame):
+    """
+    Valida que el DataFrame de stock tenga las columnas requeridas.
+    Lanza RelationCSVError si falta alguna columna.
+    """
     expected = [
         "SKU", "Producto", "Categoría", "Talla", "Color", "Stock", "Precio_Unitario", "Umbral"
     ]
@@ -21,35 +24,53 @@ def validate_stock_df(df: pd.DataFrame):
         raise RelationCSVError(f"stock.csv - Faltan columnas: {missing}")
 
 def validate_ventas_df(df: pd.DataFrame):
+    """
+    Valida que el DataFrame de ventas tenga las columnas requeridas.
+    Lanza RelationCSVError si falta alguna columna.
+    """
     expected = ["Fecha", "SKU", "Unidades_Vendidas"]
     missing = [col for col in expected if col not in df.columns]
     if missing:
         raise RelationCSVError(f"ventas.csv - Faltan columnas: {missing}")
 
 def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes, overrides: list = None) -> pd.DataFrame:
+    """
+    Lee los CSV de stock y ventas (en bytes), valida y construye el DataFrame de relación:
+    Fecha,SKU,Stock,Unidades_Vendidas,Reposicion
+
+    - Stock: stock al inicio de la fecha
+    - Unidades_Vendidas: vendidas ese día (0 si no hay)
+    - Reposicion: por defecto 0, pero modificable por overrides
+
+    Lanza RelationCSVError si los formatos no son correctos.
+    """
+
+    # Leer archivos
     try:
         stock_df = pd.read_csv(pd.io.common.BytesIO(stock_bytes))
         ventas_df = pd.read_csv(pd.io.common.BytesIO(ventas_bytes), parse_dates=["Fecha"])
     except Exception as e:
-        print("Error leyendo los archivos CSV:", e)
-        traceback.print_exc()
         raise RelationCSVError(f"Error leyendo los archivos CSV: {e}")
 
     validate_stock_df(stock_df)
     validate_ventas_df(ventas_df)
 
+    # Normalizar SKU
     stock_df["SKU"] = stock_df["SKU"].astype(str)
     ventas_df["SKU"] = ventas_df["SKU"].astype(str)
 
+    # Todas las fechas ordenadas
     fechas = ventas_df["Fecha"].drop_duplicates().sort_values()
     all_skus = stock_df["SKU"].unique()
     idx = pd.MultiIndex.from_product([fechas, all_skus], names=["Fecha", "SKU"])
     ventas_full = ventas_df.set_index(["Fecha", "SKU"]).reindex(idx, fill_value=0).reset_index()
 
+    # Stock inicial de cada SKU
     initial_stock_map = stock_df.set_index("SKU")["Stock"].to_dict()
     ventas_full["Stock"] = ventas_full["SKU"].map(initial_stock_map)
     ventas_full = ventas_full.sort_values(["SKU", "Fecha"]).reset_index(drop=True)
 
+    # Simular stock día a día y agregar columna Reposicion = 0 por defecto
     historico = []
     for sku in all_skus:
         sku_registros = ventas_full[ventas_full["SKU"] == sku].copy()
@@ -57,45 +78,35 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes, override
         for i, row in sku_registros.iterrows():
             fecha = row["Fecha"]
             unidades_vendidas = int(row["Unidades_Vendidas"])
-            reposicion = 0
-            if overrides:
-                for ov in overrides:
-                    if ov.get("Fecha") == str(fecha) and ov.get("SKU") == str(sku):
-                        if "Unidades_Vendidas" in ov:
-                            unidades_vendidas = ov["Unidades_Vendidas"]
-                        if "Reposicion" in ov:
-                            reposicion = ov["Reposicion"]
+            # Primer día: stock inicial
+            if i == sku_registros.index[0]:
+                stock = prev_stock
+            else:
+                stock = historico[-1]["Stock"] - historico[-1]["Unidades_Vendidas"]
+                stock = max(stock, 0)
             historico.append({
-                "Fecha": fecha,
+                "Fecha": fecha.strftime("%Y-%m-%d") if not isinstance(fecha, str) else fecha,
                 "SKU": sku,
-                "Stock": prev_stock,
+                "Stock": stock,
                 "Unidades_Vendidas": unidades_vendidas,
-                "Reposicion": reposicion
+                "Reposicion": 0  # Por defecto 0; se podrá modificar por override
             })
-            prev_stock = prev_stock - unidades_vendidas + reposicion
 
-    historico_df = pd.DataFrame(historico)
+    historico_df = pd.DataFrame(historico, columns=["Fecha", "SKU", "Stock", "Unidades_Vendidas", "Reposicion"])
 
-    # SOLO LO JUSTO Y NECESARIO: Añadir Precio_Unitario y Ingresos_Brutos
-    precio_map = stock_df.set_index("SKU")["Precio_Unitario"].to_dict()
-    historico_df["Precio_Unitario"] = historico_df["SKU"].map(precio_map)
-
-    # Defensa frente a NaN o tipos erróneos
-    historico_df["Precio_Unitario"] = pd.to_numeric(historico_df["Precio_Unitario"], errors="coerce").fillna(0)
-    historico_df["Unidades_Vendidas"] = pd.to_numeric(historico_df["Unidades_Vendidas"], errors="coerce").fillna(0).astype(int)
-    historico_df["Ingresos_Brutos"] = historico_df["Precio_Unitario"] * historico_df["Unidades_Vendidas"]
-
-    historico_df = historico_df[
-        ["Fecha", "SKU", "Stock", "Unidades_Vendidas", "Reposicion", "Precio_Unitario", "Ingresos_Brutos"]
-    ]
-
-    # LOG para debug si hace falta
-    try:
-        print("Historico generado (primeras filas):")
-        print(historico_df.head())
-        print("Tipos de columna:")
-        print(historico_df.dtypes)
-    except Exception as e:
-        print("Error imprimiendo para debug:", e)
+    # Aplicar overrides si existen
+    if overrides:
+        for override in overrides:
+            # Acepta str o int para SKU
+            fecha = override.get("Fecha")
+            sku = str(override.get("SKU"))
+            mask = (
+                (historico_df["Fecha"] == fecha) &
+                (historico_df["SKU"] == sku)
+            )
+            if "Reposicion" in override:
+                historico_df.loc[mask, "Reposicion"] = override["Reposicion"]
+            if "Unidades_Vendidas" in override:
+                historico_df.loc[mask, "Unidades_Vendidas"] = override["Unidades_Vendidas"]
 
     return historico_df
