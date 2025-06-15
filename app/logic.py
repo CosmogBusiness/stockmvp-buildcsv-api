@@ -36,11 +36,13 @@ def validate_ventas_df(df: pd.DataFrame):
 def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes, overrides: list = None) -> pd.DataFrame:
     """
     Lee los CSV de stock y ventas (en bytes), valida y construye el DataFrame de relación:
-    Fecha,SKU,Stock,Unidades_Vendidas,Reposicion
+    Fecha,SKU,Stock,Unidades_Vendidas,Reposicion,Precio_Unitario,Ingresos_Brutos
 
     - Stock: stock al inicio de la fecha
     - Unidades_Vendidas: vendidas ese día (0 si no hay)
     - Reposicion: por defecto 0, pero modificable por overrides
+    - Precio_Unitario: extraído de stock.csv
+    - Ingresos_Brutos: Precio_Unitario * Unidades_Vendidas
 
     Lanza RelationCSVError si los formatos no son correctos.
     """
@@ -78,35 +80,36 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes, override
         for i, row in sku_registros.iterrows():
             fecha = row["Fecha"]
             unidades_vendidas = int(row["Unidades_Vendidas"])
-            # Primer día: stock inicial
-            if i == sku_registros.index[0]:
-                stock = prev_stock
-            else:
-                stock = historico[-1]["Stock"] - historico[-1]["Unidades_Vendidas"]
-                stock = max(stock, 0)
+            # Aplicar overrides si corresponde
+            reposicion = 0
+            if overrides:
+                for ov in overrides:
+                    if ov.get("Fecha") == str(fecha) and ov.get("SKU") == str(sku):
+                        if "Unidades_Vendidas" in ov:
+                            unidades_vendidas = ov["Unidades_Vendidas"]
+                        if "Reposicion" in ov:
+                            reposicion = ov["Reposicion"]
             historico.append({
-                "Fecha": fecha.strftime("%Y-%m-%d") if not isinstance(fecha, str) else fecha,
+                "Fecha": fecha,
                 "SKU": sku,
-                "Stock": stock,
+                "Stock": prev_stock,
                 "Unidades_Vendidas": unidades_vendidas,
-                "Reposicion": 0  # Por defecto 0; se podrá modificar por override
+                "Reposicion": reposicion
             })
+            prev_stock = prev_stock - unidades_vendidas + reposicion
 
-    historico_df = pd.DataFrame(historico, columns=["Fecha", "SKU", "Stock", "Unidades_Vendidas", "Reposicion"])
+    historico_df = pd.DataFrame(historico)
 
-    # Aplicar overrides si existen
-    if overrides:
-        for override in overrides:
-            # Acepta str o int para SKU
-            fecha = override.get("Fecha")
-            sku = str(override.get("SKU"))
-            mask = (
-                (historico_df["Fecha"] == fecha) &
-                (historico_df["SKU"] == sku)
-            )
-            if "Reposicion" in override:
-                historico_df.loc[mask, "Reposicion"] = override["Reposicion"]
-            if "Unidades_Vendidas" in override:
-                historico_df.loc[mask, "Unidades_Vendidas"] = override["Unidades_Vendidas"]
+    # Añade la columna Precio_Unitario (del stock original)
+    precio_map = stock_df.set_index("SKU")["Precio_Unitario"].to_dict()
+    historico_df["Precio_Unitario"] = historico_df["SKU"].map(precio_map)
+
+    # Añade la columna Ingresos_Brutos (Precio_Unitario * Unidades_Vendidas)
+    historico_df["Ingresos_Brutos"] = historico_df["Precio_Unitario"] * historico_df["Unidades_Vendidas"]
+
+    # Asegura el orden de columnas original + nuevas
+    historico_df = historico_df[
+        ["Fecha", "SKU", "Stock", "Unidades_Vendidas", "Reposicion", "Precio_Unitario", "Ingresos_Brutos"]
+    ]
 
     return historico_df
