@@ -80,7 +80,6 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes, override
         for i, row in sku_registros.iterrows():
             fecha = row["Fecha"]
             unidades_vendidas = int(row["Unidades_Vendidas"])
-            # Aplicar overrides si corresponde
             reposicion = 0
             if overrides:
                 for ov in overrides:
@@ -100,14 +99,12 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes, override
 
     historico_df = pd.DataFrame(historico)
 
-    # Añade la columna Precio_Unitario (del stock original)
+    # SOLO LO JUSTO Y NECESARIO: Añadir Precio_Unitario y Ingresos_Brutos
     precio_map = stock_df.set_index("SKU")["Precio_Unitario"].to_dict()
     historico_df["Precio_Unitario"] = historico_df["SKU"].map(precio_map)
-
-    # Añade la columna Ingresos_Brutos (Precio_Unitario * Unidades_Vendidas)
     historico_df["Ingresos_Brutos"] = historico_df["Precio_Unitario"] * historico_df["Unidades_Vendidas"]
 
-    # Asegura el orden de columnas original + nuevas
+    # Orden final de columnas
     historico_df = historico_df[
         ["Fecha", "SKU", "Stock", "Unidades_Vendidas", "Reposicion", "Precio_Unitario", "Ingresos_Brutos"]
     ]
