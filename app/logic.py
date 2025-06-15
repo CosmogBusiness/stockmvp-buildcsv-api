@@ -6,6 +6,7 @@ Funciones de negocio para la generación del histórico de stock-ventas.
 
 import pandas as pd
 import numpy as np
+import traceback
 
 class RelationCSVError(Exception):
     """Excepción personalizada para errores de formato de CSV."""
@@ -30,6 +31,8 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes, override
         stock_df = pd.read_csv(pd.io.common.BytesIO(stock_bytes))
         ventas_df = pd.read_csv(pd.io.common.BytesIO(ventas_bytes), parse_dates=["Fecha"])
     except Exception as e:
+        print("Error leyendo los archivos CSV:", e)
+        traceback.print_exc()
         raise RelationCSVError(f"Error leyendo los archivos CSV: {e}")
 
     validate_stock_df(stock_df)
@@ -73,16 +76,26 @@ def build_stock_sales_relation(stock_bytes: bytes, ventas_bytes: bytes, override
 
     historico_df = pd.DataFrame(historico)
 
-    # SOLO LO JUSTO Y NECESARIO: Añadir Precio_Unitario y Ingresos_Brutos con robustez ante NaN
+    # SOLO LO JUSTO Y NECESARIO: Añadir Precio_Unitario y Ingresos_Brutos
     precio_map = stock_df.set_index("SKU")["Precio_Unitario"].to_dict()
     historico_df["Precio_Unitario"] = historico_df["SKU"].map(precio_map)
-    historico_df["Precio_Unitario"] = historico_df["Precio_Unitario"].fillna(0)
-    historico_df["Unidades_Vendidas"] = historico_df["Unidades_Vendidas"].fillna(0)
+
+    # Defensa frente a NaN o tipos erróneos
+    historico_df["Precio_Unitario"] = pd.to_numeric(historico_df["Precio_Unitario"], errors="coerce").fillna(0)
+    historico_df["Unidades_Vendidas"] = pd.to_numeric(historico_df["Unidades_Vendidas"], errors="coerce").fillna(0).astype(int)
     historico_df["Ingresos_Brutos"] = historico_df["Precio_Unitario"] * historico_df["Unidades_Vendidas"]
-    historico_df["Ingresos_Brutos"] = historico_df["Ingresos_Brutos"].fillna(0)
 
     historico_df = historico_df[
         ["Fecha", "SKU", "Stock", "Unidades_Vendidas", "Reposicion", "Precio_Unitario", "Ingresos_Brutos"]
     ]
+
+    # LOG para debug si hace falta
+    try:
+        print("Historico generado (primeras filas):")
+        print(historico_df.head())
+        print("Tipos de columna:")
+        print(historico_df.dtypes)
+    except Exception as e:
+        print("Error imprimiendo para debug:", e)
 
     return historico_df
